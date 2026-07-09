@@ -1,0 +1,17 @@
+{
+  "name": "qaflow",
+  "version": "0.1.0",
+  "description": "QAFlow - Gestão de qualidade e reuso de test cases para Jira Cloud",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "@forge/api": "^5.0.0",
+    "@forge/kvs": "^1.7.0",
+    "@forge/react": "^11.0.0",
+    "@forge/resolver": "^1.6.0",
+    "@forge/bridge": "^4.0.0"
+  }
+}
