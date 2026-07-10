@@ -2,6 +2,7 @@ import ForgeReact, {
   Box,
   Button,
   Inline,
+  Lozenge,
   Stack,
   Text,
   Textfield,
@@ -13,6 +14,7 @@ import ForgeReact, {
   ModalTitle,
   ModalTransition,
   Select,
+  SectionMessage,
   useState,
   useEffect,
 } from '@forge/react';
@@ -30,44 +32,87 @@ const emptyCase = () => ({
   tags: [],
   preconditions: '',
   parameters: {},
+  specStatus: 'draft',
   steps: [emptyStep()],
 });
+
+const STATUS_OPTIONS = [
+  { label: 'Rascunho', value: 'draft' },
+  { label: 'Em revisão', value: 'review' },
+  { label: 'Aprovado', value: 'approved' },
+  { label: 'Obsoleto', value: 'deprecated' },
+];
+
+const STATUS_APPEARANCE = {
+  draft: 'default',
+  review: 'inprogress',
+  approved: 'success',
+  deprecated: 'removed',
+};
+
+const statusLabel = (s) =>
+  STATUS_OPTIONS.find((o) => o.value === s)?.label ?? s;
 
 const CasesTab = ({ projectKey }) => {
   const [cases, setCases] = useState([]);
   const [sharedSteps, setSharedSteps] = useState([]);
   const [editing, setEditing] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   const refresh = () =>
     Promise.all([
       invoke('tc.list', { projectKey }),
       invoke('ss.list'),
-    ]).then(([c, s]) => {
-      setCases(c ?? []);
-      setSharedSteps(s ?? []);
-      setLoading(false);
-    });
+    ])
+      .then(([c, s]) => {
+        setCases(c ?? []);
+        setSharedSteps(s ?? []);
+        setLoading(false);
+        setError(null);
+      })
+      .catch((e) => {
+        setLoading(false);
+        setError(e?.message ?? String(e));
+      });
 
   useEffect(() => {
     refresh();
   }, [projectKey]);
 
-  const save = async () => {
-    await invoke('tc.save', { projectKey, testCase: editing });
-    setEditing(null);
-    refresh();
+  const safe = async (fn) => {
+    try {
+      await fn();
+      setError(null);
+    } catch (e) {
+      setError(e?.message ?? String(e));
+    }
   };
 
-  const clone = async (id) => {
-    await invoke('tc.clone', { projectKey, sourceId: id });
-    refresh();
-  };
+  const save = () =>
+    safe(async () => {
+      await invoke('tc.save', { projectKey, testCase: editing });
+      setEditing(null);
+      refresh();
+    });
 
-  const remove = async (id) => {
-    await invoke('tc.delete', { projectKey, id });
-    refresh();
-  };
+  const clone = (id) =>
+    safe(async () => {
+      await invoke('tc.clone', { projectKey, sourceId: id });
+      refresh();
+    });
+
+  const remove = (id) =>
+    safe(async () => {
+      await invoke('tc.delete', { projectKey, id });
+      refresh();
+    });
+
+  const changeStatus = (id, status) =>
+    safe(async () => {
+      await invoke('tc.setStatus', { projectKey, id, status });
+      refresh();
+    });
 
   return (
     <Stack space="space.150">
@@ -78,6 +123,12 @@ const CasesTab = ({ projectKey }) => {
         <Text>{cases.length} caso(s) na biblioteca</Text>
       </Inline>
 
+      {error && (
+        <SectionMessage appearance="error" title="Não foi possível concluir">
+          <Text>{error}</Text>
+        </SectionMessage>
+      )}
+
       {loading && <Text>Carregando…</Text>}
 
       {cases.map((c) => (
@@ -86,17 +137,33 @@ const CasesTab = ({ projectKey }) => {
           padding="space.150"
           backgroundColor="color.background.neutral"
         >
-          <Inline space="space.100" alignBlock="center">
-            <Text>
-              <strong>{c.title}</strong> · v{c.currentVersion} · {c.steps.length}{' '}
-              step(s)
-            </Text>
-            <Button onClick={() => setEditing(c)}>Editar</Button>
-            <Button onClick={() => clone(c.id)}>Clonar</Button>
-            <Button appearance="danger" onClick={() => remove(c.id)}>
-              Excluir
-            </Button>
-          </Inline>
+          <Stack space="space.100">
+            <Inline space="space.100" alignBlock="center">
+              <Lozenge appearance={STATUS_APPEARANCE[c.specStatus] ?? 'default'}>
+                {statusLabel(c.specStatus ?? 'draft')}
+              </Lozenge>
+              <Text>
+                <strong>{c.title}</strong> · v{c.currentVersion} ·{' '}
+                {c.steps.length} step(s)
+              </Text>
+            </Inline>
+            <Inline space="space.100" alignBlock="center">
+              <Select
+                spacing="compact"
+                value={{
+                  label: statusLabel(c.specStatus ?? 'draft'),
+                  value: c.specStatus ?? 'draft',
+                }}
+                options={STATUS_OPTIONS}
+                onChange={(opt) => changeStatus(c.id, opt.value)}
+              />
+              <Button onClick={() => setEditing(c)}>Editar</Button>
+              <Button onClick={() => clone(c.id)}>Clonar</Button>
+              <Button appearance="danger" onClick={() => remove(c.id)}>
+                Excluir
+              </Button>
+            </Inline>
+          </Stack>
         </Box>
       ))}
 
@@ -105,7 +172,9 @@ const CasesTab = ({ projectKey }) => {
           <Modal onClose={() => setEditing(null)} width="x-large">
             <ModalHeader>
               <ModalTitle>
-                {editing.id ? `Editar caso · v${editing.currentVersion}` : 'Novo caso'}
+                {editing.id
+                  ? `Editar caso · v${editing.currentVersion}`
+                  : 'Novo caso'}
               </ModalTitle>
             </ModalHeader>
             <ModalBody>
@@ -117,6 +186,19 @@ const CasesTab = ({ projectKey }) => {
                     setEditing({ ...editing, title: e.target.value })
                   }
                 />
+                <Inline space="space.100" alignBlock="center">
+                  <Text>Status da especificação:</Text>
+                  <Select
+                    value={{
+                      label: statusLabel(editing.specStatus ?? 'draft'),
+                      value: editing.specStatus ?? 'draft',
+                    }}
+                    options={STATUS_OPTIONS}
+                    onChange={(opt) =>
+                      setEditing({ ...editing, specStatus: opt.value })
+                    }
+                  />
+                </Inline>
                 <TextArea
                   placeholder="Pré-condições"
                   value={editing.preconditions}
@@ -151,7 +233,10 @@ const CasesTab = ({ projectKey }) => {
                         ]}
                         onChange={(opt) => {
                           const steps = [...editing.steps];
-                          steps[i] = { ...s, sharedStepRef: opt?.value || null };
+                          steps[i] = {
+                            ...s,
+                            sharedStepRef: opt?.value || null,
+                          };
                           setEditing({ ...editing, steps });
                         }}
                       />
